@@ -54,6 +54,58 @@
             transform: none;
         }
         
+        /* Toggle switch for tangent line */
+        .toggle-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-left: 12px;
+            padding: 6px 12px;
+            background: #f0fdf4;
+            border-radius: 20px;
+            border: 1px solid #d1fae5;
+        }
+        
+        .toggle-checkbox {
+            width: 40px;
+            height: 24px;
+            appearance: none;
+            -webkit-appearance: none;
+            background: #cbd5e1;
+            border-radius: 12px;
+            cursor: pointer;
+            position: relative;
+            transition: background 0.3s ease;
+            outline: none;
+        }
+        
+        .toggle-checkbox:checked {
+            background: #10b981;
+        }
+        
+        .toggle-checkbox::before {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: white;
+            top: 2px;
+            left: 2px;
+            transition: left 0.3s ease;
+        }
+        
+        .toggle-checkbox:checked::before {
+            left: 18px;
+        }
+        
+        .toggle-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #065f46;
+            user-select: none;
+        }
+        
         .animation-status {
             display: inline-block;
             margin-left: 12px;
@@ -162,6 +214,14 @@
                     <div id="animationStatus" class="animation-status">Ready</div>
                 </div>
                 
+                <!-- Tangent Line Toggle -->
+                <div class="flex items-center mb-4">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="tangentToggle" class="toggle-checkbox">
+                        <span class="toggle-label">📏 Tangent Line</span>
+                    </label>
+                </div>
+                
                 <div class="relative h-72 sm:h-96 w-full chart-container">
                     <div id="animationCursor"></div>
                     <canvas id="yieldChart"></canvas>
@@ -196,7 +256,7 @@
                 <div class="bg-slate-800/80 border border-slate-700 p-4 rounded-xl">
                     <span class="text-xs font-bold text-amber-400 uppercase tracking-wide block mb-1">💡 Real-World Interpretation:</span>
                     <p id="laymanExplanation" class="text-sm text-slate-300 leading-relaxed">
-                        Click play above to watch the yield curve animate! The glowing cursor follows along the chart, revealing data progressively as it moves from Year 3 to Year 22.
+                        Click play above to watch the yield curve animate! The glowing cursor follows along the chart, revealing data progressively as it moves from Year 3 to Year 22. Toggle the tangent line to see the slope at each point!
                     </p>
                 </div>
             </div>
@@ -240,33 +300,50 @@
 
         // Initially, show no data points - they'll reveal during animation
         let visibleDataPoints = 0;
+        let showTangentLine = false;
+        let currentSelectedAge = 8;
 
         const yieldChart = new Chart(ctx, {
             type: 'line',
             data: {
                 labels: labels,
-                datasets: [{
-                    label: 'FFB Yield (t/ha)',
-                    data: yieldData.map((val, idx) => idx < visibleDataPoints ? val : null),
-                    borderColor: '#059669', // Emerald 600
-                    borderWidth: 3,
-                    backgroundColor: chartGradient,
-                    fill: true,
-                    tension: 0.2, // Smooth curve transitions
-                    pointRadius: 0,
-                    pointHoverRadius: 7,
-                    pointHoverBackgroundColor: '#f59e0b', // Amber 500
-                    pointHoverBorderColor: '#fff',
-                    pointHoverBorderWidth: 2,
-                    segment: {
-                        borderColor: function(ctx) {
-                            if (ctx.dataIndex < visibleDataPoints - 1) {
-                                return '#059669';
+                datasets: [
+                    // Main yield curve
+                    {
+                        label: 'FFB Yield (t/ha)',
+                        data: yieldData.map((val, idx) => idx < visibleDataPoints ? val : null),
+                        borderColor: '#059669',
+                        borderWidth: 3,
+                        backgroundColor: chartGradient,
+                        fill: true,
+                        tension: 0.2,
+                        pointRadius: 0,
+                        pointHoverRadius: 7,
+                        pointHoverBackgroundColor: '#f59e0b',
+                        pointHoverBorderColor: '#fff',
+                        pointHoverBorderWidth: 2,
+                        segment: {
+                            borderColor: function(ctx) {
+                                if (ctx.dataIndex < visibleDataPoints - 1) {
+                                    return '#059669';
+                                }
+                                return 'rgba(5, 150, 105, 0.2)';
                             }
-                            return 'rgba(5, 150, 105, 0.2)'; // Faded unrevealed line
                         }
+                    },
+                    // Tangent line dataset
+                    {
+                        label: 'Tangent Line (Rate of Change)',
+                        data: [],
+                        borderColor: '#f59e0b',
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0,
+                        pointRadius: 0,
+                        hidden: true
                     }
-                }]
+                ]
             },
             options: {
                 responsive: true,
@@ -304,19 +381,62 @@
                     if (activeElements.length > 0) {
                         const index = activeElements[0].index;
                         const age = parseFloat(labels[index]);
+                        currentSelectedAge = age;
                         updateAnalysisUI(age);
+                        updateTangentLine(age);
                     }
                 },
                 animation: {
-                    duration: 0 // Disable default animation for better control
+                    duration: 0
                 }
             }
         });
 
-        // 3. Animation Control Logic
+        // 3. Tangent Line Calculation and Drawing
+        function updateTangentLine(age) {
+            if (!showTangentLine) return;
+
+            const yAtAge = parseFloat(calculateYield(age).toFixed(2));
+            const slope = calculateDerivative(age);
+
+            // Create tangent line data
+            // Line extends from x-2 to x+2 for visualization
+            const tangentData = [];
+            const tangentLabels = [];
+
+            for (let i = 0; i < labels.length; i++) {
+                const x = parseFloat(labels[i]);
+                // Tangent line equation: y - y0 = m(x - x0) => y = y0 + m(x - x0)
+                const yTangent = yAtAge + slope * (x - age);
+                tangentData.push(yTangent);
+                tangentLabels.push(labels[i]);
+            }
+
+            yieldChart.data.datasets[1].data = tangentData;
+            yieldChart.data.datasets[1].hidden = false;
+            yieldChart.update('none');
+        }
+
+        function hideTangentLine() {
+            yieldChart.data.datasets[1].hidden = true;
+            yieldChart.update('none');
+        }
+
+        // 4. Tangent Line Toggle
+        const tangentToggle = document.getElementById('tangentToggle');
+        tangentToggle.addEventListener('change', () => {
+            showTangentLine = tangentToggle.checked;
+            if (showTangentLine) {
+                updateTangentLine(currentSelectedAge);
+            } else {
+                hideTangentLine();
+            }
+        });
+
+        // 5. Animation Control Logic
         let isAnimating = false;
         let animationIndex = 0;
-        let animationSpeed = 50; // milliseconds between updates
+        let animationSpeed = 50;
         let animationRequestId = null;
 
         const playBtn = document.getElementById('playBtn');
@@ -340,26 +460,26 @@
                 if (animationIndex < yieldData.length) {
                     visibleDataPoints = animationIndex + 1;
                     
-                    // Update chart with new visible data
                     yieldChart.data.datasets[0].data = yieldData.map((val, idx) => 
                         idx < visibleDataPoints ? val : null
                     );
                     yieldChart.update('none');
 
-                    // Update age and analysis box
                     const age = parseFloat(labels[animationIndex]);
+                    currentSelectedAge = age;
                     updateAnalysisUI(age);
+                    if (showTangentLine) {
+                        updateTangentLine(age);
+                    }
 
-                    // Move cursor along chart
                     const canvasRect = ctx.canvas.getBoundingClientRect();
                     const canvasWidth = canvasRect.width;
                     const canvasHeight = canvasRect.height;
                     
-                    // Calculate cursor position based on chart scale
                     const xPercent = animationIndex / (yieldData.length - 1);
                     const yValue = parseFloat(yieldData[animationIndex]);
                     const yMax = Math.max(...yieldData.map(parseFloat));
-                    const yPercent = 1 - (yValue / yMax); // Inverted because canvas y increases downward
+                    const yPercent = 1 - (yValue / yMax);
 
                     const cursorX = canvasWidth * xPercent;
                     const cursorY = canvasHeight * yPercent;
@@ -371,7 +491,6 @@
                     animationIndex++;
                     animationRequestId = setTimeout(animateFrame, animationSpeed);
                 } else {
-                    // Animation complete
                     isAnimating = false;
                     playBtn.disabled = false;
                     pauseBtn.disabled = true;
@@ -404,19 +523,21 @@
             cursor.style.display = 'none';
             if (animationRequestId) clearTimeout(animationRequestId);
 
-            // Reset chart
             yieldChart.data.datasets[0].data = yieldData.map(() => null);
+            if (showTangentLine) {
+                yieldChart.data.datasets[1].hidden = true;
+            }
             yieldChart.update('none');
 
-            // Reset analysis box to default
             updateAnalysisUI(8);
+            currentSelectedAge = 8;
         }
 
         playBtn.addEventListener('click', startAnimation);
         pauseBtn.addEventListener('click', pauseAnimation);
         resetBtn.addEventListener('click', resetAnimation);
 
-        // 4. Dynamic UI Updates and Bio-Calculus Explanations
+        // 6. Dynamic UI Updates and Bio-Calculus Explanations
         function updateAnalysisUI(age) {
             const calculatedYield = calculateYield(age);
             const derivativeVal = calculateDerivative(age);
